@@ -19,6 +19,7 @@ def create_threat(db: Session, threat_data: schemas.ThreatCreate):
     db_threat = models.Threat(
         title=threat_data.title,
         region=threat_data.region,
+        countries=threat_data.countries,
         category=threat_data.category,
         description=threat_data.description,
         potential_impact=threat_data.potential_impact,  # New field for potential impact
@@ -37,6 +38,7 @@ def create_threat(db: Session, threat_data: schemas.ThreatCreate):
         "source_urls": threat_data.source_urls,
         "created_at": db_threat.created_at,
         "region": threat_data.region,
+        "countries": threat_data.countries,
         "category": threat_data.category,
         "description": threat_data.description,
         "potential_impact": threat_data.potential_impact,  # New field for potential impact

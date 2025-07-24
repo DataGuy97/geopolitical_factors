@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from typing import List
 
-from . import crud, models, schemas
+from .import crud, models, schemas
 from .database import SessionLocal, engine
 from .services import rag_agent
 from .services.teams_notifier import send_threat_to_teams
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
     global scheduler 
     scheduler = AsyncIOScheduler()
     #scheduler.add_job(run_threat_discovery_and_save, 'interval', minutes=1)
-    scheduler.add_job(run_threat_discovery_and_save,   trigger=CronTrigger(hour=6, minute=0, timezone='UTC'))
+    scheduler.add_job(run_threat_discovery_and_save,   trigger=CronTrigger(hour=4, minute=0, timezone='UTC'))
 
     scheduler.start()
     print("Scheduler started. RAG agent will run periodically.")

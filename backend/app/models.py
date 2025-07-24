@@ -8,6 +8,7 @@ class Threat(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     region = Column(String)
+    countries = Column(JSON)
     category = Column(String)
     description = Column(String)    
     potential_impact = Column(String, nullable=True)  # New field for potential impact
