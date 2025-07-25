@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import asynccontextmanager # Import this!
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Header
 import os
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,15 +7,19 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from typing import List
+import logging
 
-from .import crud, models, schemas
+from . import crud, models, schemas
 from .database import SessionLocal, engine
 from .services import rag_agent
 from .services.teams_notifier import send_threat_to_teams
 
-
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 SECRET_KEY = os.getenv("API_SECRET_KEY")
+
 
 async def verify_secret_key(x_api_key: str = Header(..., description="API Secret Key")):
     """
@@ -32,11 +36,11 @@ async def verify_secret_key(x_api_key: str = Header(..., description="API Secret
 # This queue will hold new threats to be sent to clients as notifications
 notification_queue = asyncio.Queue()
 
-# Global scheduler instance (will be initialized in lifespan)
-# We need to declare it here so it's accessible within `lifespan` and can be started/stopped
-scheduler: AsyncIOScheduler = None 
+# Global scheduler instance
+scheduler: AsyncIOScheduler = None
 
-# --- Database Dependency (remains the same) ---
+
+# --- Database Dependency ---
 def get_db():
     db = SessionLocal()
     try:
@@ -44,84 +48,117 @@ def get_db():
     finally:
         db.close()
 
-# --- Background Task (The Agent Runner - remains the same) ---
+
+# --- Background Task (The Agent Runner) ---
 async def run_threat_discovery_and_save():
-    print("Scheduler triggered: Starting RAG agent to discover threats...")
-    db: Session = next(get_db()) # Use next() to get a session outside a request context
+    """Background task to discover and save maritime threats"""
+    logger.info("Scheduler triggered: Starting RAG agent to discover threats...")
+
+    # Create a new database session for this background task
+    db = SessionLocal()
     try:
         threat_reports = await rag_agent.find_maritime_threats()
         if not threat_reports:
-            print("Agent finished: No new threats found.")
+            logger.info("Agent finished: No new threats found.")
             return
 
+        logger.info(f"Found {len(threat_reports)} potential threats")
+
         for report in threat_reports:
-            # Here you should add logic to check if the threat is a duplicate
-            # For now, we'll create all of them.
-            new_threat_orm = crud.create_threat(db=db, threat_data=report)
-            #print(f"New threat saved to DB: {new_threat_orm.title}")
-            
-            # Convert the DB object to a Pydantic schema for the notification
-            # No from_orm needed if schema is created directly, but if Threat.from_orm
-            # handles ORM to Pydantic conversion, keep it.
-            # Assuming schemas.Threat.from_orm is correct from your pydantic warning fixes
-            new_threat_schema = schemas.Threat.model_validate(new_threat_orm) 
-            # Put the new threat into the notification queue
-            await notification_queue.put(new_threat_schema)
+            try:
+                # Create threat in database
+                new_threat_orm = crud.create_threat(db=db, threat_data=report)
+                logger.info(f"New threat saved to DB: {new_threat_orm.title}")
 
-            # --- ADD THIS LINE ---
-            # Send the notification to the Teams channel            
-            await send_threat_to_teams(new_threat_schema)
-            # --------------------
+                # Convert to Pydantic schema for notifications
+                new_threat_schema = schemas.Threat.model_validate(new_threat_orm)
 
+                # Add to notification queue
+                await notification_queue.put(new_threat_schema)
+
+                # Send Teams notification
+                try:
+                    await send_threat_to_teams(new_threat_schema)
+                    logger.info(f"Teams notification sent for threat: {new_threat_orm.title}")
+                except Exception as e:
+                    logger.error(f"Failed to send Teams notification: {e}")
+
+            except Exception as e:
+                logger.error(f"Error processing threat report: {e}")
+                continue
+
+    except Exception as e:
+        logger.error(f"Error in threat discovery process: {e}")
     finally:
         db.close()
+        logger.info("Threat discovery process completed")
 
 
 # --- Lifespan Event Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup Logic ---
-    print("Application startup initiated.")
-    
-    # 1. Create database tables (if they don't exist)
-    # This happens *once* when the application starts
-    print("Creating database tables...")
-    models.Base.metadata.create_all(bind=engine)
-    print("Database tables created/verified.")
+    logger.info("Application startup initiated.")
 
-    # 2. Initialize and start the scheduler
-    # Access the global scheduler variable
-    global scheduler 
-    scheduler = AsyncIOScheduler()
-    #scheduler.add_job(run_threat_discovery_and_save, 'interval', minutes=1)
-    scheduler.add_job(run_threat_discovery_and_save,   trigger=CronTrigger(hour=6, minute=30, timezone='UTC'))
+    try:
+        # 1. Create database tables
+        logger.info("Creating database tables...")
+        models.Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified.")
 
-    scheduler.start()
-    print("Scheduler started. RAG agent will run periodically.")
+        # 2. Initialize and start the scheduler
+        global scheduler
+        scheduler = AsyncIOScheduler()
 
-    print("Pinged your deployment. You successfully connected to MongoDB!") # Your MongoDB message
+        # Add the cron job - runs daily at 6 AM UTC
+        scheduler.add_job(
+            run_threat_discovery_and_save,
+            trigger=CronTrigger(hour=6, minute=0, timezone='UTC'),
+            id='threat_discovery_job',
+            name='Daily Threat Discovery',
+            replace_existing=True,
+            max_instances=1  # Prevent overlapping runs
+        )
 
-    print("Application startup complete.")
-    yield # Application starts serving requests after this point
+        # For testing - add a job that runs every 5 minutes (remove in production)
+        # scheduler.add_job(
+        #     run_threat_discovery_and_save,
+        #     'interval',
+        #     minutes=5,
+        #     id='test_threat_discovery',
+        #     name='Test Threat Discovery',
+        #     replace_existing=True,
+        #     max_instances=1
+        # )
 
-    # --- Shutdown Logic (runs when the application is gracefully shutting down) ---
-    print("Application shutdown initiated.")
-    if scheduler.running:
-        scheduler.shutdown()
-        print("Scheduler stopped.")
-    
-    # Add any other cleanup logic here, e.g., closing MongoDB connection
-    # if it's managed directly in this file and needs explicit closing.
-    # For SQLAlchemy, the engine usually manages connections, but if you had a
-    # global MongoDB client, you'd close it here.
+        scheduler.start()
+        logger.info("Scheduler started successfully.")
+        logger.info(f"Next run scheduled for: {scheduler.get_job('threat_discovery_job').next_run_time}")
 
-    print("Application shutdown complete.")
+        logger.info("Application startup complete.")
+
+    except Exception as e:
+        logger.error(f"Error during startup: {e}")
+        raise
+
+    yield  # Application starts serving requests
+
+    # --- Shutdown Logic ---
+    logger.info("Application shutdown initiated.")
+    try:
+        if scheduler and scheduler.running:
+            scheduler.shutdown(wait=True)
+            logger.info("Scheduler stopped.")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
+
+    logger.info("Application shutdown complete.")
 
 
 # Initialize FastAPI application with the lifespan handler
 app = FastAPI(title="Maritime Geopolitical Threats API", lifespan=lifespan)
 
-# --- CORS Middleware (remains the same) ---
+# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # In production, change this to your frontend's URL
@@ -130,11 +167,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- API Endpoints (remains the same) ---
+
+# --- API Endpoints ---
 
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Maritime Threats API"}
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for GCP"""
+    scheduler_status = "running" if scheduler and scheduler.running else "stopped"
+    next_run = None
+    if scheduler and scheduler.running:
+        job = scheduler.get_job('threat_discovery_job')
+        next_run = str(job.next_run_time) if job else "No job found"
+
+    return {
+        "status": "healthy",
+        "scheduler": scheduler_status,
+        "next_run": next_run
+    }
+
 
 @app.get("/api/threats/", response_model=List[schemas.Threat])
 def get_all_threats(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -144,14 +199,15 @@ def get_all_threats(skip: int = 0, limit: int = 100, db: Session = Depends(get_d
     threats = crud.get_threats(db, skip=skip, limit=limit)
     return threats
 
-# --- Real-Time Notification Endpoint (remains the same) ---
+
+# --- Real-Time Notification Endpoint ---
 from sse_starlette.sse import EventSourceResponse
 import json
+
 
 async def notification_generator():
     """
     Yields new threats from the queue as they arrive.
-    This keeps the connection open with the client.
     """
     while True:
         try:
@@ -160,9 +216,12 @@ async def notification_generator():
             # Send the threat data as a JSON string
             yield json.dumps(new_threat.dict())
         except asyncio.CancelledError:
-            # The client disconnected
-            print("Client disconnected.")
+            logger.info("Client disconnected from notifications.")
             break
+        except Exception as e:
+            logger.error(f"Error in notification generator: {e}")
+            break
+
 
 @app.get("/api/notifications")
 async def stream_notifications():
@@ -175,8 +234,41 @@ async def stream_notifications():
 @app.get("/api/discover-threats", dependencies=[Depends(verify_secret_key)])
 async def discover_threats():
     """
-    Endpoint to trigger the threat discovery process.
+    Endpoint to manually trigger the threat discovery process.
     Protected by a secret key.
     """
-    await run_threat_discovery_and_save()
-    return {"message": "Threat discovery initiated."}
+    try:
+        await run_threat_discovery_and_save()
+        return {"message": "Threat discovery completed successfully."}
+    except Exception as e:
+        logger.error(f"Manual threat discovery failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Threat discovery failed: {str(e)}"
+        )
+
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    """
+    Get the current status of the scheduler and jobs.
+    """
+    if not scheduler:
+        return {"status": "not_initialized"}
+
+    if not scheduler.running:
+        return {"status": "stopped"}
+
+    jobs = []
+    for job in scheduler.get_jobs():
+        jobs.append({
+            "id": job.id,
+            "name": job.name,
+            "next_run_time": str(job.next_run_time),
+            "trigger": str(job.trigger)
+        })
+
+    return {
+        "status": "running",
+        "jobs": jobs
+    }
