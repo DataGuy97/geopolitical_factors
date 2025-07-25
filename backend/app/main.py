@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
         # Add the cron job - runs daily at 6 AM UTC
         scheduler.add_job(
             run_threat_discovery_and_save,
-            trigger=CronTrigger(hour=8, minute=0, timezone='UTC'),
+            trigger=CronTrigger(hour=9, minute=0, timezone='UTC'),
             id='threat_discovery_job',
             name='Daily Threat Discovery',
             replace_existing=True,
