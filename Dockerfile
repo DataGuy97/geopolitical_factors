@@ -1,7 +1,7 @@
 FROM python:3.9-slim
 
 # Set timezone to Asia/Dubai (UAE timezone)
-ENV TZ=Asia/Dubai
+ENV TZ=UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Install system dependencies including timezone data
