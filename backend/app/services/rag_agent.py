@@ -30,11 +30,12 @@ gemini_api_key = os.getenv("GEMINI_API_KEY")
 if not gemini_api_key:
     raise ValueError("GEMINI_API_KEY environment variable not set")
 
-
-
-
-# Initialize the Gemini model
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+# Initialize the Gemini model with explicit API key
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0.1,
+    google_api_key=gemini_api_key
+)
 
 # Initialize the search tool
 search_tool = TavilySearch(max_results=10)
