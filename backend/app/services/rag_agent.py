@@ -9,8 +9,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from typing import List
 
-# Load API keys from the .env file
-load_dotenv()
+# Load .env file only if it exists (for local development)
+if os.path.exists('.env'):
+    load_dotenv()
 
 # This class defines the structure of the report we want the AI to generate.
 class ThreatReport(BaseModel):
@@ -23,6 +24,14 @@ class ThreatReport(BaseModel):
     potential_impact: str = Field(description="The potential impact of the threat on the maritime industry.")
     source_urls: List[str] = Field(description="A list of URLs for the sources used to identify the threat.")
     date_mentioned: str = Field(description="The date when the threat was mentioned in the sources. Usually a date on top for the article.")
+
+# Get API key from environment variables
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+if not gemini_api_key:
+    raise ValueError("GEMINI_API_KEY environment variable not set")
+
+
+
 
 # Initialize the Gemini model
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
