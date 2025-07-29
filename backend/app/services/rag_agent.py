@@ -26,15 +26,15 @@ class ThreatReport(BaseModel):
     date_mentioned: str = Field(description="The date when the threat was mentioned in the sources. Usually a date on top for the article.")
 
 # Get API key from environment variables
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if not gemini_api_key:
-    raise ValueError("GEMINI_API_KEY environment variable not set")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable not set")
 
 # Initialize the Gemini model with explicit API key
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     temperature=0.1,
-    google_api_key=gemini_api_key
+    google_api_key=GOOGLE_API_KEY
 )
 
 # Initialize the search tool
