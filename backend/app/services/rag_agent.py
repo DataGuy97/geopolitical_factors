@@ -34,7 +34,7 @@ if not GEMINI_API_KEY:
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     temperature=0.1,
-    google_api_key=gemini_api_key
+    google_api_key=GEMINI_API_KEY
 )
 
 # Initialize the search tool
