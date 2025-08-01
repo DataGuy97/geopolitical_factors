@@ -67,7 +67,7 @@ async def run_threat_discovery_and_save():
         for report in threat_reports:
             try:
                 # Create threat in database
-                new_threat_orm = crud.create_threat(db=db, threat_data=report)
+                new_threat_orm = crud.create_threat_safe(db=db, threat_data=report)
                 logger.info(f"New threat saved to DB: {new_threat_orm.title}")
 
                 # Convert to Pydantic schema for notifications
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
         # Add the cron job - runs daily at 6 AM UTC
         scheduler.add_job(
             run_threat_discovery_and_save,
-            trigger=CronTrigger(hour=4, minute=0, timezone='UTC'),
+            trigger=CronTrigger(hour=5, minute=0, timezone='UTC'),
             id='threat_discovery_job',
             name='Daily Threat Discovery',
             replace_existing=True,
